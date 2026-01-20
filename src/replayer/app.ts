@@ -39,7 +39,60 @@ const EFFECT_COLORS = {
 
 type Mode = "setup" | "resolving" | "replay";
 
+type AgentPlacementRequest = {
+  side: string;
+  type: string;
+  x: number;
+  y: number;
+};
+
+type AgentPlacementResult = { ok: true; unitId: number } | { ok: false; reason: string };
+
+declare global {
+  interface Window {
+    battlePrototype?: {
+      placeUnit: (request: AgentPlacementRequest) => AgentPlacementResult;
+    };
+  }
+}
+
 const tileKey = (pos: { x: number; y: number }) => `${pos.x},${pos.y}`;
+
+const SIDE_ALIASES: Record<string, Side> = {
+  red: "Red",
+  blue: "Blue"
+};
+
+const TYPE_ALIASES: Record<string, UnitType> = {
+  infantry: "Infantry",
+  archer: "Archer",
+  cavalry: "Cavalry",
+  mage: "Mage"
+};
+
+const parseSide = (value: unknown): Side | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return SIDE_ALIASES[normalized] ?? null;
+};
+
+const parseUnitType = (value: unknown): UnitType | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return TYPE_ALIASES[normalized] ?? null;
+};
+
+const parseGridIndex = (value: unknown): number | null => {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(numeric)) {
+    return null;
+  }
+  return numeric;
+};
 
 interface ReplayUnit {
   id: number;
@@ -410,23 +463,34 @@ const app = () => {
     return { ok: true };
   };
 
-  const placeUnit = (pos: { x: number; y: number }) => {
-    const size = UNIT_SIZES[selectedType];
-    const validation = canPlaceUnit(pos, selectedSide, size);
+  const placeUnitAt = (
+    pos: { x: number; y: number },
+    side: Side,
+    type: UnitType,
+    statusMessage?: string
+  ): AgentPlacementResult => {
+    const size = UNIT_SIZES[type];
+    const validation = canPlaceUnit(pos, side, size);
     if (!validation.ok) {
-      setStatus(validation.reason ?? "Cannot place unit.");
-      return;
+      const reason = validation.reason ?? "Cannot place unit.";
+      setStatus(reason);
+      return { ok: false, reason };
     }
     const unit: UnitInput = {
       id: nextUnitId++,
-      side: selectedSide,
-      type: selectedType,
+      side,
+      type,
       size,
       position: { ...pos }
     };
     setupUnits.push(unit);
-    setStatus(`${selectedSide} ${selectedType} placed.`);
+    setStatus(statusMessage ?? `${side} ${type} placed.`);
     render();
+    return { ok: true, unitId: unit.id };
+  };
+
+  const placeUnit = (pos: { x: number; y: number }) => {
+    placeUnitAt(pos, selectedSide, selectedType);
   };
 
   const removeUnit = (pos: { x: number; y: number }) => {
@@ -637,6 +701,29 @@ const app = () => {
     engine = null;
     loadInput(baseInput, "Back to setup.");
     tickDisplay.textContent = "Tick: 0";
+  };
+
+  const placeUnitFromAgent = (request: AgentPlacementRequest): AgentPlacementResult => {
+    if (mode !== "setup") {
+      return { ok: false, reason: "Not in setup mode." };
+    }
+    if (!request || typeof request !== "object") {
+      return { ok: false, reason: "Invalid request." };
+    }
+    const side = parseSide(request.side);
+    if (!side) {
+      return { ok: false, reason: "Invalid side." };
+    }
+    const type = parseUnitType(request.type);
+    if (!type) {
+      return { ok: false, reason: "Invalid unit type." };
+    }
+    const x = parseGridIndex(request.x);
+    const y = parseGridIndex(request.y);
+    if (x === null || y === null) {
+      return { ok: false, reason: "Invalid coordinates." };
+    }
+    return placeUnitAt({ x, y }, side, type, `Agent placed ${side} ${type}.`);
   };
 
   const getCanvasMetrics = () => {
@@ -890,6 +977,10 @@ const app = () => {
     canvasMetrics = resizeCanvas();
     render();
   });
+
+  window.battlePrototype = {
+    placeUnit: placeUnitFromAgent
+  };
 
   buildButtons();
   syncButtonStates();
