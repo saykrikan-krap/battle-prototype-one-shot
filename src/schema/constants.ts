@@ -1,4 +1,4 @@
-import type { Side, UnitType } from "./types";
+import type { Facing, Side, UnitType } from "./types";
 
 export const GRID_WIDTH = 12;
 export const GRID_HEIGHT = 8;
@@ -41,6 +41,11 @@ export const PROJECTILE_SPEED: Record<"Arrow" | "Fireball", number> = {
 export const DEPLOYMENT_COLUMNS: Record<Side, { start: number; end: number }> = {
   Red: { start: 0, end: 2 },
   Blue: { start: 9, end: 11 }
+};
+
+export const DEFAULT_FACING: Record<Side, Facing> = {
+  Red: "right",
+  Blue: "left"
 };
 
 export const MIN_RANGED_DISTANCE = 1;

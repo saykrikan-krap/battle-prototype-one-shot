@@ -1,6 +1,7 @@
 export type Side = "Red" | "Blue";
 export type UnitType = "Infantry" | "Archer" | "Cavalry" | "Mage";
 export type ProjectileKind = "Arrow" | "Fireball";
+export type Facing = "left" | "right";
 
 export interface Position {
   x: number;
