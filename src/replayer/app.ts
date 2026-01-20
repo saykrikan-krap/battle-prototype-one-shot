@@ -243,6 +243,7 @@ const app = () => {
   const playToggle = select<HTMLButtonElement>("#play-toggle");
   const stepButton = select<HTMLButtonElement>("#step-button");
   const restartButton = select<HTMLButtonElement>("#restart-button");
+  const setupButton = select<HTMLButtonElement>("#setup-button");
   const speedSelect = select<HTMLSelectElement>("#speed-select");
   const winnerText = select<HTMLHeadingElement>("#winner-text");
   const survivorText = select<HTMLParagraphElement>("#survivor-text");
@@ -507,6 +508,10 @@ const app = () => {
     render();
   };
 
+  setupButton.onclick = () => {
+    returnToSetup();
+  };
+
   for (const tickSpeed of TICK_SPEEDS) {
     const option = document.createElement("option");
     option.value = tickSpeed.toString();
@@ -550,15 +555,31 @@ const app = () => {
     URL.revokeObjectURL(url);
   };
 
-  const loadInput = (input: BattleInput) => {
+  const loadInput = (input: BattleInput, message = "Loaded input.") => {
     setupUnits = input.units.map((unit) => ({ ...unit }));
     nextUnitId =
       setupUnits.reduce((maxId, unit) => Math.max(maxId, unit.id), 0) + 1;
     seedInput.value = input.seed.toString();
     timeLimitInput.value = input.timeLimit.toString();
     updateMode("setup");
-    setStatus("Loaded input.");
+    setStatus(message);
     render();
+  };
+
+  const returnToSetup = () => {
+    const baseInput = output?.input ?? buildInput();
+    playing = false;
+    playToggle.textContent = "Play";
+    playhead = 0;
+    maxTick = 0;
+    if (worker) {
+      worker.terminate();
+      worker = null;
+    }
+    output = null;
+    engine = null;
+    loadInput(baseInput, "Back to setup.");
+    tickDisplay.textContent = "Tick: 0";
   };
 
   const getCanvasMetrics = () => {
