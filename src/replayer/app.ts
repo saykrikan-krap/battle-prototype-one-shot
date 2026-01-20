@@ -52,11 +52,22 @@ type AgentCommand = {
 };
 
 type AgentPlacementResult = { ok: true; unitId: number } | { ok: false; reason: string };
+type AgentPlacementBatchResult =
+  | { ok: true; placed: number }
+  | { ok: false; placed: number; errors: number; reason: string };
+
+type PlacementOptions = {
+  statusMessage?: string;
+  suppressStatus?: boolean;
+  suppressRender?: boolean;
+};
 
 declare global {
   interface Window {
     battlePrototype?: {
       placeUnit: (request: AgentPlacementRequest) => AgentPlacementResult;
+      placeUnits: (request: AgentPlacementRequest[] | { units: AgentPlacementRequest[] }) =>
+        AgentPlacementBatchResult;
     };
   }
 }
@@ -97,6 +108,19 @@ const parseGridIndex = (value: unknown): number | null => {
     return null;
   }
   return numeric;
+};
+
+const normalizePlacementBatch = (payload: unknown): AgentPlacementRequest[] | null => {
+  if (Array.isArray(payload)) {
+    return payload as AgentPlacementRequest[];
+  }
+  if (payload && typeof payload === "object") {
+    const maybe = payload as { units?: unknown };
+    if (Array.isArray(maybe.units)) {
+      return maybe.units as AgentPlacementRequest[];
+    }
+  }
+  return null;
 };
 
 interface ReplayUnit {
@@ -472,13 +496,15 @@ const app = () => {
     pos: { x: number; y: number },
     side: Side,
     type: UnitType,
-    statusMessage?: string
+    options?: PlacementOptions
   ): AgentPlacementResult => {
     const size = UNIT_SIZES[type];
     const validation = canPlaceUnit(pos, side, size);
     if (!validation.ok) {
       const reason = validation.reason ?? "Cannot place unit.";
-      setStatus(reason);
+      if (!options?.suppressStatus) {
+        setStatus(reason);
+      }
       return { ok: false, reason };
     }
     const unit: UnitInput = {
@@ -489,8 +515,12 @@ const app = () => {
       position: { ...pos }
     };
     setupUnits.push(unit);
-    setStatus(statusMessage ?? `${side} ${type} placed.`);
-    render();
+    if (!options?.suppressStatus) {
+      setStatus(options?.statusMessage ?? `${side} ${type} placed.`);
+    }
+    if (!options?.suppressRender) {
+      render();
+    }
     return { ok: true, unitId: unit.id };
   };
 
@@ -708,7 +738,10 @@ const app = () => {
     tickDisplay.textContent = "Tick: 0";
   };
 
-  const placeUnitFromAgent = (request: AgentPlacementRequest): AgentPlacementResult => {
+  const placeUnitFromAgent = (
+    request: AgentPlacementRequest,
+    options?: PlacementOptions
+  ): AgentPlacementResult => {
     if (mode !== "setup") {
       return { ok: false, reason: "Not in setup mode." };
     }
@@ -728,7 +761,44 @@ const app = () => {
     if (x === null || y === null) {
       return { ok: false, reason: "Invalid coordinates." };
     }
-    return placeUnitAt({ x, y }, side, type, `Agent placed ${side} ${type}.`);
+    return placeUnitAt({ x, y }, side, type, {
+      statusMessage: `Agent placed ${side} ${type}.`,
+      suppressStatus: options?.suppressStatus,
+      suppressRender: options?.suppressRender
+    });
+  };
+
+  const placeUnitsFromAgent = (
+    payload: AgentPlacementRequest[] | { units: AgentPlacementRequest[] }
+  ): AgentPlacementBatchResult => {
+    if (mode !== "setup") {
+      return { ok: false, placed: 0, errors: 1, reason: "Not in setup mode." };
+    }
+    const batch = normalizePlacementBatch(payload);
+    if (!batch || batch.length === 0) {
+      return { ok: false, placed: 0, errors: 1, reason: "No units provided." };
+    }
+    let placed = 0;
+    let errors = 0;
+    let firstError = "";
+    for (const entry of batch) {
+      const result = placeUnitFromAgent(entry, { suppressStatus: true, suppressRender: true });
+      if (result.ok) {
+        placed += 1;
+      } else {
+        errors += 1;
+        if (!firstError) {
+          firstError = result.reason;
+        }
+      }
+    }
+    render();
+    if (errors === 0) {
+      setStatus(`Agent placed ${placed} units.`);
+      return { ok: true, placed };
+    }
+    setStatus(`Agent placed ${placed} units (${errors} failed: ${firstError}).`);
+    return { ok: false, placed, errors, reason: firstError || "Unknown error." };
   };
 
   const getCanvasMetrics = () => {
@@ -977,6 +1047,13 @@ const app = () => {
           if (!result.ok) {
             setStatus(`Agent error: ${result.reason}`);
           }
+        } else if (command.action === "placeUnits") {
+          const result = placeUnitsFromAgent(
+            command.payload as AgentPlacementRequest[] | { units: AgentPlacementRequest[] }
+          );
+          if (!result.ok) {
+            setStatus(`Agent error: ${result.reason}`);
+          }
         }
       };
       source.onerror = () => {
@@ -1018,7 +1095,8 @@ const app = () => {
   });
 
   window.battlePrototype = {
-    placeUnit: placeUnitFromAgent
+    placeUnit: placeUnitFromAgent,
+    placeUnits: placeUnitsFromAgent
   };
 
   connectAgentStream();

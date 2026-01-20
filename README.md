@@ -23,6 +23,18 @@ Send a placement command from the CLI:
 node scripts/agent-cli.js placeUnit Red Infantry 0 0
 ```
 
+Send a batch of placements in one call:
+
+```bash
+node scripts/agent-cli.js placeUnits '[{"side":"Red","type":"Infantry","x":0,"y":0},{"side":"Blue","type":"Infantry","x":11,"y":7}]'
+```
+
+You can also load a JSON file with `@`:
+
+```bash
+node scripts/agent-cli.js placeUnits @units.json
+```
+
 Note: commands are delivered live to connected clients; refreshing the app clears setup state.
 
 ## Notes
