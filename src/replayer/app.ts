@@ -1,4 +1,5 @@
 import {
+  DEFAULT_FACING,
   DEPLOYMENT_COLUMNS,
   GRID_HEIGHT,
   GRID_WIDTH,
@@ -11,6 +12,7 @@ import type {
   BattleEvent,
   BattleInput,
   BattleResult,
+  Facing,
   ResolveOutput,
   Side,
   UnitInput,
@@ -36,6 +38,8 @@ const EFFECT_COLORS = {
 };
 
 type Mode = "setup" | "resolving" | "replay";
+
+const tileKey = (pos: { x: number; y: number }) => `${pos.x},${pos.y}`;
 
 interface ReplayUnit {
   id: number;
@@ -80,6 +84,7 @@ class ReplayEngine {
   public projectiles: ActiveProjectile[];
   public moveAnimations: Map<number, MoveAnimation>;
   public meleeFlashes: MeleeFlash[];
+  public tileFacing: Map<string, Facing>;
   public result: BattleResult | null;
 
   constructor(output: ResolveOutput) {
@@ -91,6 +96,7 @@ class ReplayEngine {
     this.projectiles = [];
     this.moveAnimations = new Map();
     this.meleeFlashes = [];
+    this.tileFacing = new Map();
     this.result = output.result;
     this.indexEvents(output.events);
   }
@@ -110,6 +116,50 @@ class ReplayEngine {
     this.projectiles = [];
     this.moveAnimations.clear();
     this.meleeFlashes = [];
+    this.tileFacing.clear();
+  }
+
+  private isTileOccupied(pos: { x: number; y: number }, excludeId?: number) {
+    for (const unit of this.units.values()) {
+      if (!unit.alive) {
+        continue;
+      }
+      if (excludeId && unit.id === excludeId) {
+        continue;
+      }
+      if (unit.position.x === pos.x && unit.position.y === pos.y) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private ensureFacingForTile(pos: { x: number; y: number }, side: Side) {
+    const key = tileKey(pos);
+    if (!this.tileFacing.has(key)) {
+      this.tileFacing.set(key, DEFAULT_FACING[side]);
+    }
+  }
+
+  private updateFacingOnEntry(
+    unit: ReplayUnit,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    wasEmpty: boolean
+  ) {
+    if (wasEmpty) {
+      this.ensureFacingForTile(to, unit.side);
+    }
+    if (to.x === from.x) {
+      return;
+    }
+    this.tileFacing.set(tileKey(to), to.x > from.x ? "right" : "left");
+  }
+
+  private clearFacingIfEmpty(pos: { x: number; y: number }) {
+    if (!this.isTileOccupied(pos)) {
+      this.tileFacing.delete(tileKey(pos));
+    }
   }
 
   advanceTo(targetTick: number) {
@@ -130,6 +180,7 @@ class ReplayEngine {
       case "UnitSpawned": {
         const unit = event.payload.unit;
         this.units.set(unit.id, { ...unit, alive: true });
+        this.ensureFacingForTile(unit.position, unit.side);
         break;
       }
       case "UnitMoved": {
@@ -137,14 +188,19 @@ class ReplayEngine {
         if (!unit) {
           break;
         }
+        const from = event.payload.from;
+        const to = event.payload.to;
+        const wasEmpty = !this.isTileOccupied(to, unit.id);
+        this.updateFacingOnEntry(unit, from, to, wasEmpty);
         this.moveAnimations.set(unit.id, {
           unitId: unit.id,
-          from: event.payload.from,
-          to: event.payload.to,
+          from,
+          to,
           startTick: event.tick,
           endTick: event.tick + 1
         });
-        unit.position = { ...event.payload.to };
+        unit.position = { ...to };
+        this.clearFacingIfEmpty(from);
         break;
       }
       case "MeleeAttackResolved": {
@@ -188,6 +244,7 @@ class ReplayEngine {
         const unit = this.units.get(event.payload.unitId);
         if (unit) {
           unit.alive = false;
+          this.clearFacingIfEmpty(unit.position);
         }
         break;
       }
@@ -607,6 +664,17 @@ const app = () => {
 
   let canvasMetrics = resizeCanvas();
 
+  const buildSetupFacing = () => {
+    const facing = new Map<string, Facing>();
+    for (const unit of setupUnits) {
+      const key = tileKey(unit.position);
+      if (!facing.has(key)) {
+        facing.set(key, DEFAULT_FACING[unit.side]);
+      }
+    }
+    return facing;
+  };
+
   const drawGrid = (cellSize: number, width: number, height: number) => {
     ctx.clearRect(0, 0, width, height);
     ctx.save();
@@ -646,28 +714,38 @@ const app = () => {
     units: ReplayUnit[],
     cellSize: number,
     currentTick: number,
-    alpha: number
+    alpha: number,
+    tileFacing: Map<string, Facing>
   ) => {
     const byTile = new Map<string, ReplayUnit[]>();
     for (const unit of units) {
       if (!unit.alive) {
         continue;
       }
-      const key = `${unit.position.x},${unit.position.y}`;
+      const key = tileKey(unit.position);
       const list = byTile.get(key) ?? [];
       list.push(unit);
       byTile.set(key, list);
     }
 
-    const slotOffsets = [
-      { x: -0.25, y: -0.25 },
-      { x: 0.25, y: -0.25 },
-      { x: -0.25, y: 0.25 },
-      { x: 0.25, y: 0.25 }
-    ];
+    const slotOffsetsByFacing: Record<Facing, Array<{ x: number; y: number }>> = {
+      right: [
+        { x: 0.25, y: -0.25 },
+        { x: 0.25, y: 0.25 },
+        { x: -0.25, y: -0.25 },
+        { x: -0.25, y: 0.25 }
+      ],
+      left: [
+        { x: -0.25, y: -0.25 },
+        { x: -0.25, y: 0.25 },
+        { x: 0.25, y: -0.25 },
+        { x: 0.25, y: 0.25 }
+      ]
+    };
 
     for (const [key, tileUnits] of byTile.entries()) {
-      const [tileX, tileY] = key.split(",").map(Number);
+      const facing = tileFacing.get(key) ?? DEFAULT_FACING[tileUnits[0].side];
+      const slotOffsets = slotOffsetsByFacing[facing];
       tileUnits.sort((a, b) => a.id - b.id);
       tileUnits.forEach((unit, index) => {
         const offset = slotOffsets[index] ?? { x: 0, y: 0 };
@@ -751,7 +829,8 @@ const app = () => {
     drawGrid(cellSize, width, height);
 
     if (mode === "setup") {
-      drawUnits(setupUnits.map((unit) => ({ ...unit, alive: true })), cellSize, 0, 0);
+      const facing = buildSetupFacing();
+      drawUnits(setupUnits.map((unit) => ({ ...unit, alive: true })), cellSize, 0, 0, facing);
       return;
     }
 
@@ -763,7 +842,7 @@ const app = () => {
     const units = Array.from(engine.units.values());
     drawProjectiles(engine.projectiles, cellSize, playhead);
     drawMeleeFlashes(engine.meleeFlashes, cellSize, playhead);
-    drawUnits(units, cellSize, currentTick, alpha);
+    drawUnits(units, cellSize, currentTick, alpha, engine.tileFacing);
   };
 
   const animate = (time: number) => {
