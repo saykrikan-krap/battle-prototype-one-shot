@@ -2,10 +2,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 
 const PORT = Number.parseInt(process.env.AGENT_PORT ?? "5174", 10);
-const BACKLOG_LIMIT = 100;
-
 const clients = new Set();
-const backlog = [];
 
 const sendJson = (res, statusCode, payload) => {
   const body = JSON.stringify(payload);
@@ -17,13 +14,6 @@ const sendJson = (res, statusCode, payload) => {
     "Access-Control-Allow-Headers": "Content-Type"
   });
   res.end(body);
-};
-
-const addToBacklog = (command) => {
-  backlog.push(command);
-  while (backlog.length > BACKLOG_LIMIT) {
-    backlog.shift();
-  }
 };
 
 const broadcast = (command) => {
@@ -63,9 +53,6 @@ const server = http.createServer((req, res) => {
       Connection: "keep-alive"
     });
     res.write(": connected\n\n");
-    for (const command of backlog) {
-      res.write(`data: ${JSON.stringify(command)}\n\n`);
-    }
     clients.add(res);
     const heartbeat = setInterval(() => {
       res.write(": heartbeat\n\n");
@@ -100,7 +87,6 @@ const server = http.createServer((req, res) => {
         payload: payload.payload ?? {},
         ts: Date.now()
       };
-      addToBacklog(command);
       broadcast(command);
       sendJson(res, 200, { ok: true, id: command.id });
     });

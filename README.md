@@ -23,6 +23,8 @@ Send a placement command from the CLI:
 node scripts/agent-cli.js placeUnit Red Infantry 0 0
 ```
 
+Note: commands are delivered live to connected clients; refreshing the app clears setup state.
+
 ## Notes
 
 - Resolver runs in a web worker (`src/resolver/worker.ts`).
