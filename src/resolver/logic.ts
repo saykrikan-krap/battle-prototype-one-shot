@@ -313,8 +313,10 @@ export const resolveBattle = (input: BattleInput): ResolveOutput => {
   }
 
   let projectileId = 0;
+  let pendingProjectiles = 0;
   let lastActivityTick = 0;
   let loopGuard = 0;
+  let eliminationPending = false;
 
   const unitOrder = sortedUnits.map((unit) => unit.id);
 
@@ -322,13 +324,52 @@ export const resolveBattle = (input: BattleInput): ResolveOutput => {
     const list = projectilesByTick.get(projectile.impactTick) ?? [];
     list.push(projectile);
     projectilesByTick.set(projectile.impactTick, list);
+    pendingProjectiles += 1;
   };
 
   const registerActivity = (tick: number) => {
     lastActivityTick = tick;
   };
 
-  for (let tick = 0; tick <= input.timeLimit; tick += 1) {
+  const finalizeEliminated = (tick: number): ResolveOutput => {
+    const redLeft = getFriendlyUnits(units, "Red").length;
+    const blueLeft = getFriendlyUnits(units, "Blue").length;
+    const winner: BattleResult["winner"] =
+      redLeft === 0 && blueLeft === 0 ? "Draw" : redLeft === 0 ? "Blue" : "Red";
+    const result: BattleResult = {
+      winner,
+      reason: "eliminated",
+      tick,
+      survivors: { Red: redLeft, Blue: blueLeft }
+    };
+    emitEvent({
+      tick,
+      seq: 0,
+      type: "BattleEnded",
+      payload: result
+    });
+    return { input, events, result };
+  };
+
+  const finalizeDraw = (tick: number, reason: "time_limit" | "stalled"): ResolveOutput => {
+    const redLeft = getFriendlyUnits(units, "Red").length;
+    const blueLeft = getFriendlyUnits(units, "Blue").length;
+    const result: BattleResult = {
+      winner: "Draw",
+      reason,
+      tick,
+      survivors: { Red: redLeft, Blue: blueLeft }
+    };
+    emitEvent({
+      tick,
+      seq: 0,
+      type: "BattleEnded",
+      payload: result
+    });
+    return { input, events, result };
+  };
+
+  for (let tick = 0; ; tick += 1) {
     loopGuard += 1;
     if (loopGuard > MAX_LOOP_GUARD) {
       throw new Error("Loop guard tripped. Check for infinite loop conditions.");
@@ -392,6 +433,20 @@ export const resolveBattle = (input: BattleInput): ResolveOutput => {
           activityThisTick = true;
         }
       }
+    }
+    if (impacts.length > 0) {
+      pendingProjectiles = Math.max(0, pendingProjectiles - impacts.length);
+      projectilesByTick.delete(tick);
+    }
+
+    if (eliminationPending) {
+      if (pendingProjectiles === 0) {
+        return finalizeEliminated(tick);
+      }
+      if (activityThisTick) {
+        registerActivity(tick);
+      }
+      continue;
     }
 
     for (const unitId of unitOrder) {
@@ -541,69 +596,19 @@ export const resolveBattle = (input: BattleInput): ResolveOutput => {
     const redLeft = getFriendlyUnits(units, "Red").length;
     const blueLeft = getFriendlyUnits(units, "Blue").length;
     if (redLeft === 0 || blueLeft === 0) {
-      const winner: BattleResult["winner"] =
-        redLeft === 0 && blueLeft === 0 ? "Draw" : redLeft === 0 ? "Blue" : "Red";
-      const result: BattleResult = {
-        winner,
-        reason: "eliminated",
-        tick,
-        survivors: { Red: redLeft, Blue: blueLeft }
-      };
-      emitEvent({
-        tick,
-        seq: 0,
-        type: "BattleEnded",
-        payload: result
-      });
-      return { input, events, result };
+      if (pendingProjectiles > 0) {
+        eliminationPending = true;
+        continue;
+      }
+      return finalizeEliminated(tick);
     }
 
     if (tick >= input.timeLimit) {
-      const result: BattleResult = {
-        winner: "Draw",
-        reason: "time_limit",
-        tick,
-        survivors: { Red: redLeft, Blue: blueLeft }
-      };
-      emitEvent({
-        tick,
-        seq: 0,
-        type: "BattleEnded",
-        payload: result
-      });
-      return { input, events, result };
+      return finalizeDraw(tick, "time_limit");
     }
 
-    if (tick - lastActivityTick >= STALL_TICKS) {
-      const result: BattleResult = {
-        winner: "Draw",
-        reason: "stalled",
-        tick,
-        survivors: { Red: redLeft, Blue: blueLeft }
-      };
-      emitEvent({
-        tick,
-        seq: 0,
-        type: "BattleEnded",
-        payload: result
-      });
-      return { input, events, result };
+    if (pendingProjectiles === 0 && tick - lastActivityTick >= STALL_TICKS) {
+      return finalizeDraw(tick, "stalled");
     }
   }
-
-  const finalRed = getFriendlyUnits(units, "Red").length;
-  const finalBlue = getFriendlyUnits(units, "Blue").length;
-  const result: BattleResult = {
-    winner: "Draw",
-    reason: "time_limit",
-    tick: input.timeLimit,
-    survivors: { Red: finalRed, Blue: finalBlue }
-  };
-  emitEvent({
-    tick: input.timeLimit,
-    seq: 0,
-    type: "BattleEnded",
-    payload: result
-  });
-  return { input, events, result };
 };
