@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Battle Prototype One Shot</title>
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="app-header">
+        <div class="title-block">
+          <p class="eyebrow">Tick-Based Battle Prototype</p>
+          <h1>Battle Prototype: One Shot</h1>
+        </div>
+        <div class="header-status" id="header-status">Setup Mode</div>
+      </header>
+      <main class="app-main">
+        <section class="board">
+          <div class="board-frame">
+            <canvas id="battle-canvas" width="960" height="640"></canvas>
+            <div class="board-overlay" id="board-overlay" aria-live="polite">
+              <div class="overlay-card">
+                <p class="overlay-title">Resolving battle...</p>
+                <p class="overlay-subtitle">The worker is crunching the event log.</p>
+              </div>
+            </div>
+          </div>
+          <div class="board-footer">
+            <div class="status-pill" id="status-pill">Place units to begin.</div>
+            <div class="tick-display" id="tick-display">Tick: 0</div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-section" id="setup-panel">
+            <h2>Setup</h2>
+            <div class="palette">
+              <div class="palette-group">
+                <p class="palette-label">Side</p>
+                <div class="button-row" id="side-buttons"></div>
+              </div>
+              <div class="palette-group">
+                <p class="palette-label">Unit Type</p>
+                <div class="button-row" id="type-buttons"></div>
+              </div>
+            </div>
+            <div class="field-row">
+              <label for="seed-input">Seed</label>
+              <div class="field-stack">
+                <input id="seed-input" type="number" inputmode="numeric" />
+                <button id="seed-random" class="ghost">Randomize</button>
+              </div>
+            </div>
+            <div class="field-row">
+              <label for="time-limit">Time Limit (ticks)</label>
+              <input id="time-limit" type="number" inputmode="numeric" />
+            </div>
+            <button id="resolve-button" class="primary">Resolve Battle</button>
+            <p class="hint">Left click to place. Right click to remove. Deployment zones: Red (0-2), Blue (9-11).</p>
+          </div>
+          <div class="panel-section" id="replay-panel" hidden>
+            <h2>Replay</h2>
+            <div class="controls">
+              <button id="play-toggle" class="primary">Play</button>
+              <button id="step-button" class="ghost">Step</button>
+              <button id="restart-button" class="ghost">Restart</button>
+              <button id="setup-button" class="ghost">Back to Setup</button>
+            </div>
+            <div class="field-row">
+              <label for="speed-select">Speed (ticks/sec)</label>
+              <select id="speed-select"></select>
+            </div>
+            <div class="result-card" id="result-card">
+              <h3 id="winner-text">Winner: --</h3>
+              <p id="survivor-text">Survivors: --</p>
+              <p id="tick-total">Total Ticks: --</p>
+            </div>
+          </div>
+          <div class="panel-section" id="debug-panel" hidden>
+            <h2>Debug &amp; Export</h2>
+            <div class="controls">
+              <button id="export-input" class="ghost">Export Input</button>
+              <button id="export-log" class="ghost">Export Log</button>
+            </div>
+            <div class="field-row">
+              <label for="import-area">Import JSON</label>
+              <textarea id="import-area" rows="6" placeholder="Paste BattleInput or ResolveOutput JSON"></textarea>
+            </div>
+            <div class="controls">
+              <button id="import-input" class="ghost">Load Input</button>
+              <button id="import-log" class="ghost">Load Log</button>
+            </div>
+            <details class="event-log" id="event-log">
+              <summary>Event Log</summary>
+              <pre id="event-log-content"></pre>
+            </details>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
