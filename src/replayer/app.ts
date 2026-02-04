@@ -39,7 +39,89 @@ const EFFECT_COLORS = {
 
 type Mode = "setup" | "resolving" | "replay";
 
+type AgentPlacementRequest = {
+  side: string;
+  type: string;
+  x: number;
+  y: number;
+};
+
+type AgentCommand = {
+  action: string;
+  payload?: unknown;
+};
+
+type AgentPlacementResult = { ok: true; unitId: number } | { ok: false; reason: string };
+type AgentPlacementBatchResult =
+  | { ok: true; placed: number }
+  | { ok: false; placed: number; errors: number; reason: string };
+
+type PlacementOptions = {
+  statusMessage?: string;
+  suppressStatus?: boolean;
+  suppressRender?: boolean;
+};
+
+declare global {
+  interface Window {
+    battlePrototype?: {
+      placeUnit: (request: AgentPlacementRequest) => AgentPlacementResult;
+      placeUnits: (request: AgentPlacementRequest[] | { units: AgentPlacementRequest[] }) =>
+        AgentPlacementBatchResult;
+    };
+  }
+}
+
 const tileKey = (pos: { x: number; y: number }) => `${pos.x},${pos.y}`;
+
+const SIDE_ALIASES: Record<string, Side> = {
+  red: "Red",
+  blue: "Blue"
+};
+
+const TYPE_ALIASES: Record<string, UnitType> = {
+  infantry: "Infantry",
+  archer: "Archer",
+  cavalry: "Cavalry",
+  mage: "Mage"
+};
+
+const parseSide = (value: unknown): Side | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return SIDE_ALIASES[normalized] ?? null;
+};
+
+const parseUnitType = (value: unknown): UnitType | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return TYPE_ALIASES[normalized] ?? null;
+};
+
+const parseGridIndex = (value: unknown): number | null => {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(numeric)) {
+    return null;
+  }
+  return numeric;
+};
+
+const normalizePlacementBatch = (payload: unknown): AgentPlacementRequest[] | null => {
+  if (Array.isArray(payload)) {
+    return payload as AgentPlacementRequest[];
+  }
+  if (payload && typeof payload === "object") {
+    const maybe = payload as { units?: unknown };
+    if (Array.isArray(maybe.units)) {
+      return maybe.units as AgentPlacementRequest[];
+    }
+  }
+  return null;
+};
 
 interface ReplayUnit {
   id: number;
@@ -410,23 +492,40 @@ const app = () => {
     return { ok: true };
   };
 
-  const placeUnit = (pos: { x: number; y: number }) => {
-    const size = UNIT_SIZES[selectedType];
-    const validation = canPlaceUnit(pos, selectedSide, size);
+  const placeUnitAt = (
+    pos: { x: number; y: number },
+    side: Side,
+    type: UnitType,
+    options?: PlacementOptions
+  ): AgentPlacementResult => {
+    const size = UNIT_SIZES[type];
+    const validation = canPlaceUnit(pos, side, size);
     if (!validation.ok) {
-      setStatus(validation.reason ?? "Cannot place unit.");
-      return;
+      const reason = validation.reason ?? "Cannot place unit.";
+      if (!options?.suppressStatus) {
+        setStatus(reason);
+      }
+      return { ok: false, reason };
     }
     const unit: UnitInput = {
       id: nextUnitId++,
-      side: selectedSide,
-      type: selectedType,
+      side,
+      type,
       size,
       position: { ...pos }
     };
     setupUnits.push(unit);
-    setStatus(`${selectedSide} ${selectedType} placed.`);
-    render();
+    if (!options?.suppressStatus) {
+      setStatus(options?.statusMessage ?? `${side} ${type} placed.`);
+    }
+    if (!options?.suppressRender) {
+      render();
+    }
+    return { ok: true, unitId: unit.id };
+  };
+
+  const placeUnit = (pos: { x: number; y: number }) => {
+    placeUnitAt(pos, selectedSide, selectedType);
   };
 
   const removeUnit = (pos: { x: number; y: number }) => {
@@ -637,6 +736,69 @@ const app = () => {
     engine = null;
     loadInput(baseInput, "Back to setup.");
     tickDisplay.textContent = "Tick: 0";
+  };
+
+  const placeUnitFromAgent = (
+    request: AgentPlacementRequest,
+    options?: PlacementOptions
+  ): AgentPlacementResult => {
+    if (mode !== "setup") {
+      return { ok: false, reason: "Not in setup mode." };
+    }
+    if (!request || typeof request !== "object") {
+      return { ok: false, reason: "Invalid request." };
+    }
+    const side = parseSide(request.side);
+    if (!side) {
+      return { ok: false, reason: "Invalid side." };
+    }
+    const type = parseUnitType(request.type);
+    if (!type) {
+      return { ok: false, reason: "Invalid unit type." };
+    }
+    const x = parseGridIndex(request.x);
+    const y = parseGridIndex(request.y);
+    if (x === null || y === null) {
+      return { ok: false, reason: "Invalid coordinates." };
+    }
+    return placeUnitAt({ x, y }, side, type, {
+      statusMessage: `Agent placed ${side} ${type}.`,
+      suppressStatus: options?.suppressStatus,
+      suppressRender: options?.suppressRender
+    });
+  };
+
+  const placeUnitsFromAgent = (
+    payload: AgentPlacementRequest[] | { units: AgentPlacementRequest[] }
+  ): AgentPlacementBatchResult => {
+    if (mode !== "setup") {
+      return { ok: false, placed: 0, errors: 1, reason: "Not in setup mode." };
+    }
+    const batch = normalizePlacementBatch(payload);
+    if (!batch || batch.length === 0) {
+      return { ok: false, placed: 0, errors: 1, reason: "No units provided." };
+    }
+    let placed = 0;
+    let errors = 0;
+    let firstError = "";
+    for (const entry of batch) {
+      const result = placeUnitFromAgent(entry, { suppressStatus: true, suppressRender: true });
+      if (result.ok) {
+        placed += 1;
+      } else {
+        errors += 1;
+        if (!firstError) {
+          firstError = result.reason;
+        }
+      }
+    }
+    render();
+    if (errors === 0) {
+      setStatus(`Agent placed ${placed} units.`);
+      return { ok: true, placed };
+    }
+    setStatus(`Agent placed ${placed} units (${errors} failed: ${firstError}).`);
+    return { ok: false, placed, errors, reason: firstError || "Unknown error." };
   };
 
   const getCanvasMetrics = () => {
@@ -863,6 +1025,47 @@ const app = () => {
     requestAnimationFrame(animate);
   };
 
+  const connectAgentStream = () => {
+    const host = window.location.hostname || "localhost";
+    const url = `http://${host}:5174/agent/events`;
+    let source: EventSource | null = null;
+
+    const connect = () => {
+      source = new EventSource(url);
+      source.onmessage = (event) => {
+        let command: AgentCommand | null = null;
+        try {
+          command = JSON.parse(event.data) as AgentCommand;
+        } catch (error) {
+          return;
+        }
+        if (!command || typeof command.action !== "string") {
+          return;
+        }
+        if (command.action === "placeUnit") {
+          const result = placeUnitFromAgent(command.payload as AgentPlacementRequest);
+          if (!result.ok) {
+            setStatus(`Agent error: ${result.reason}`);
+          }
+        } else if (command.action === "placeUnits") {
+          const result = placeUnitsFromAgent(
+            command.payload as AgentPlacementRequest[] | { units: AgentPlacementRequest[] }
+          );
+          if (!result.ok) {
+            setStatus(`Agent error: ${result.reason}`);
+          }
+        }
+      };
+      source.onerror = () => {
+        source?.close();
+        source = null;
+        setTimeout(connect, 2000);
+      };
+    };
+
+    connect();
+  };
+
   canvas.addEventListener("click", (event) => {
     if (mode !== "setup") {
       return;
@@ -890,6 +1093,13 @@ const app = () => {
     canvasMetrics = resizeCanvas();
     render();
   });
+
+  window.battlePrototype = {
+    placeUnit: placeUnitFromAgent,
+    placeUnits: placeUnitsFromAgent
+  };
+
+  connectAgentStream();
 
   buildButtons();
   syncButtonStates();
